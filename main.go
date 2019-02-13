@@ -6,13 +6,14 @@ import (
 	"os"
 	"sync"
 	"github.com/go-kit/kit/log/term"
-
+	"github.com/QOSGroup/qos/app"
 	"github.com/tendermint/tendermint/libs/log"
 	tmrpc "github.com/tendermint/tendermint/rpc/client"
+	clictx "github.com/QOSGroup/qbase/client/context"
 	"strings"
+	"time"
 	"os/signal"
 	"syscall"
-	"time"
 )
 
 var logger = log.NewNopLogger()
@@ -43,7 +44,6 @@ Examples:
 	}
 
 	flagSet.Parse(os.Args[1:])
-
 	if flagSet.NArg() == 0 {
 		flagSet.Usage()
 		os.Exit(1)
@@ -63,7 +63,6 @@ Examples:
 			return term.FgBgColor{}
 		}
 		logger = log.NewTMLoggerWithColorFn(log.NewSyncWriter(os.Stdout), colorFn)
-
 		fmt.Printf("Running %ds test @ %s\n", durationInt, flagSet.Arg(0))
 	}
 
@@ -80,17 +79,22 @@ Examples:
 	var (
 		endpoints     = strings.Split(flagSet.Arg(0), ",")
 		client        = tmrpc.NewHTTP(endpoints[0], "/websocket")
-		initialHeight = latestBlockHeight(client)
 	)
+
+	initialHeight := latestBlockHeight(client)
 	logger.Info("Latest block height", "h", initialHeight)
 
 	fmt.Println("time duration: ", durationInt)
 	fmt.Println("transacter rate: ", txsRate)
 	fmt.Println("transacter broadcast method: ", broadcastTxMethod)
 
+
+
 	transacters := startTransacters(
+		client,
 		endpoints,
 		connections,
+		durationInt,
 		txsRate,
 		txSize,
 		"broadcast_tx_"+broadcastTxMethod,
@@ -164,8 +168,10 @@ func countCrashes(crashes []bool) int {
 }
 
 func startTransacters(
+	client tmrpc.Client,
 	endpoints []string,
 	connections,
+	durationInt int,
 	txsRate int,
 	txSize int,
 	broadcastTxMethod string,
@@ -175,7 +181,8 @@ func startTransacters(
 	wg := sync.WaitGroup{}
 	wg.Add(len(endpoints))
 	for i, e := range endpoints {
-		t := newTransacter(e, connections, txsRate, txSize, broadcastTxMethod)
+		ctx := clictx.NewCLIContext().WithCodec(app.MakeCodec()).WithClient(client)
+		t := newTransacter(ctx, e, connections, durationInt, txsRate, txSize, broadcastTxMethod)
 		t.SetLogger(logger)
 		go func(i int) {
 			defer wg.Done()

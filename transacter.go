@@ -25,7 +25,7 @@ import (
 	"github.com/QOSGroup/qbase/client/keys"
 	"bytes"
 	"github.com/tendermint/tendermint/crypto"
-	"github.com/QOSGroup/qos/app"
+	//"github.com/QOSGroup/qos/app"
 	"github.com/QOSGroup/qbase/client/account"
 )
 
@@ -36,7 +36,11 @@ const (
 )
 
 type transacter struct {
+	Clictx clictx.CLIContext
+	PreparedTx		  map[int][]byte
+
 	Target            string
+	Duration		  int
 	Rate              int
 	Size              int
 	Connections       int
@@ -51,13 +55,18 @@ type transacter struct {
 	logger log.Logger
 }
 
-func newTransacter(target string, connections, rate int, size int, broadcastTxMethod string) *transacter {
+func newTransacter(clictx clictx.CLIContext, target string, connections, durationInt int, rate int, size int, broadcastTxMethod string) *transacter {
 	return &transacter{
+		Clictx: 		   clictx,
+		PreparedTx:		   map[int][]byte{},
+
 		Target:            target,
+		Duration: 	   	   durationInt,
 		Rate:              rate,
 		Size:              size,
 		Connections:       connections,
 		BroadcastTxMethod: broadcastTxMethod,
+
 		conns:             make([]*websocket.Conn, connections),
 		connsBroken:       make([]bool, connections),
 		logger:            log.NewNopLogger(),
@@ -81,6 +90,11 @@ func (t *transacter) Start() error {
 		}
 		t.conns[i] = c
 	}
+	fmt.Println("Preparing txs...")
+	t.prepareTx()
+	fmt.Println("All txs ready")
+
+	//fmt.Println(bytes.Equal(t.PreparedTx[0], t.PreparedTx[1]))
 
 	t.startingWg.Add(t.Connections)
 	t.endingWg.Add(2 * t.Connections)
@@ -97,6 +111,55 @@ func (t *transacter) Start() error {
 func connect(host string) (*websocket.Conn, *http.Response, error) {
 	u := url.URL{Scheme: "ws", Host: host, Path: "/websocket"}
 	return websocket.DefaultDialer.Dial(u.String(), nil)
+}
+
+func (t *transacter)prepareTx() {
+	maxGas := viper.GetInt64(cflags.FlagMaxGas)
+	if maxGas < 0 {
+		errors.New("max-gas flag not correct")
+	}
+	// FIXME address and passphase should be saved into a file, and reading from it
+	bech32add, _ := types.GetAddrFromBech32("address1k65clfmyr30v20lga42srah0x7er95ludlyme4")
+	tx := transfer.TxTransfer{
+		Senders: transfertypes.TransItems{
+			{types.Address(bech32add), types.NewInt(1), nil},
+		},
+		Receivers: transfertypes.TransItems{
+			{types.Address(bech32add), types.NewInt(1), nil},
+		},
+	}
+	txStd := txs.NewTxStd(tx, "test", types.NewInt(maxGas))
+
+	signers := getSigners(t.Clictx, txStd.ITx.GetSigner())
+	singerNonce := getSignerNonce(t.Clictx)
+	var txNumber int64
+
+	for _, signerName := range signers {
+		//wg := sync.WaitGroup{}
+		//wg.Add(t.Rate * t.Duration)
+		//for i := 0; i < t.Duration; i++  {
+		//	//bz := make([]byte, t.Rate)
+		//	go func(i int) {
+		//		for j := 0; j < t.Rate; j++ {
+		//			go func(j int) {
+		//				txStd, _ = signStdTx(t.Clictx, signerName, singerNonce[signerName]+txNumber+1, txStd, "")
+		//				t.PreparedTx[int(txNumber)] = t.Clictx.Codec.MustMarshalBinaryBare(txStd)
+		//				txNumber++
+		//				wg.Done()
+		//			}(j)
+		//		}
+		//	}(i)
+		//}
+		//wg.Wait()
+		for i := 0; i < t.Duration; i++  {
+			//bz := make([]byte, t.Rate)
+			for j := 0; j < t.Rate; j++ {
+				signedTxStd, _ := signStdTx(t.Clictx, signerName, singerNonce[signerName]+txNumber+1, txStd, "")
+				t.PreparedTx[int(txNumber)] = t.Clictx.Codec.MustMarshalBinaryBare(signedTxStd)
+				txNumber++
+			}
+		}
+	}
 }
 
 func (t *transacter) sendLoop(connIndex int) {
@@ -129,10 +192,6 @@ func (t *transacter) sendLoop(connIndex int) {
 		t.endingWg.Done()
 	}()
 
-	client := tmrpc.NewHTTP("localhost:26657", "/websocket")
-	ctx := clictx.NewCLIContext().WithCodec(app.MakeCodec()).WithClient(client)
-	singerNonce := getSignerNonce(ctx)
-
 	var txNumber = 0
 	for {
 		select {
@@ -148,10 +207,10 @@ func (t *transacter) sendLoop(connIndex int) {
 			fmt.Println("time RIGHT NOW: ", now)
 
 			for i := 0; i < t.Rate; i++ {
-				txNumber++
+
 				//// update tx number of the tx, and the corresponding hex
 				fmt.Println("txNumber: ", txNumber)
-				BroadcastTx(ctx, int64(txNumber), singerNonce)
+				BroadcastTx(t.Clictx, t.PreparedTx[txNumber])
 				paramsJSON, err := json.Marshal(map[string]interface{}{"tx": txNumber})
 
 				if err != nil {
@@ -184,6 +243,7 @@ func (t *transacter) sendLoop(connIndex int) {
 						break
 					}
 				}
+				txNumber++
 			}
 
 			timeToSend := time.Since(startTime)
@@ -234,34 +294,13 @@ func getSignerNonce(ctx clictx.CLIContext) (map[string]int64) {
 	return signerNonce
 }
 
-func BroadcastTx(ctx clictx.CLIContext, txNumber int64, signerNonce map[string]int64) ([]byte, error) {
-	maxGas := viper.GetInt64(cflags.FlagMaxGas)
-	if maxGas < 0 {
-		errors.New("max-gas flag not correct")
-	}
-
-	bech32add, _ := types.GetAddrFromBech32("address1k65clfmyr30v20lga42srah0x7er95ludlyme4")
-	tx := transfer.TxTransfer{
-		Senders: transfertypes.TransItems{
-			{types.Address(bech32add), types.NewInt(1), nil},
-		},
-		Receivers: transfertypes.TransItems{
-			{types.Address(bech32add), types.NewInt(1), nil},
-		},
-	}
-	txStd := txs.NewTxStd(tx, "test", types.NewInt(maxGas))
-
-	signers := getSigners(ctx, txStd.ITx.GetSigner())
-	for _, signerName := range signers {
-		txStd, _ = signStdTx(ctx, signerName, signerNonce[signerName] + txNumber, txStd, "")
-	}
-
-	bz := ctx.Codec.MustMarshalBinaryBare(txStd)
-	_, err := ctx.BroadcastTxSync(bz)
+func BroadcastTx(ctx clictx.CLIContext, tx []byte) ([]byte, error) {
+	_, err := ctx.BroadcastTxSync(tx)
+	//_, err := ctx.BroadcastTxAsync(tx)
 	if err != nil {
 		fmt.Println("BroadcastTx error status: ", err)
 	}
-	return bz, nil
+	return tx, nil
 }
 
 func getSigners(ctx clictx.CLIContext, txSignerAddrs []types.Address) []string {
@@ -298,7 +337,6 @@ func getDefaultAccountNonce(ctx clictx.CLIContext, address []byte) (int64, error
 }
 
 func signStdTx(ctx clictx.CLIContext, signerKeyName string, nonce int64, txStd *txs.TxStd, fromChainID string) (*txs.TxStd, error) {
-
 	info, err := keys.GetKeyInfo(ctx, signerKeyName)
 	if err != nil {
 		return nil, err
@@ -319,17 +357,18 @@ func signStdTx(ctx clictx.CLIContext, signerKeyName string, nonce int64, txStd *
 
 	sigdata := txStd.BuildSignatureBytes(nonce, fromChainID)
 	sig, pubkey := signData(ctx, signerKeyName, sigdata)
-
-	txStd.Signature = append(txStd.Signature, txs.Signature{
+	txStd.Signature = make([]txs.Signature, 1)
+	txStd.Signature[0] = txs.Signature{
 		Pubkey:    pubkey,
 		Signature: sig,
 		Nonce:     nonce,
-	})
+	}
 
 	return txStd, nil
 }
 
 func signData(ctx clictx.CLIContext, name string, data []byte) ([]byte, crypto.PubKey) {
+	// FIXME password shoud be read from config file
 	pass := "12345678"
 	//pass, err := keys.GetPassphrase(ctx, name)
 	////fmt.Println("pass is:", pass)
