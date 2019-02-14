@@ -27,6 +27,7 @@ import (
 	"github.com/tendermint/tendermint/crypto"
 	//"github.com/QOSGroup/qos/app"
 	"github.com/QOSGroup/qbase/client/account"
+	"github.com/orcaman/concurrent-map"
 )
 
 const (
@@ -36,13 +37,15 @@ const (
 )
 
 type transacter struct {
+	Config 		      Config
+	qosPath			  string
+
 	Clictx clictx.CLIContext
-	PreparedTx		  map[int][]byte
+	PreparedTx		  cmap.ConcurrentMap
 
 	Target            string
 	Duration		  int
 	Rate              int
-	Size              int
 	Connections       int
 	BroadcastTxMethod string
 
@@ -55,15 +58,17 @@ type transacter struct {
 	logger log.Logger
 }
 
-func newTransacter(clictx clictx.CLIContext, target string, connections, durationInt int, rate int, size int, broadcastTxMethod string) *transacter {
+func newTransacter(config Config, qosPath string, clictx clictx.CLIContext, target string, connections, durationInt int, rate int, broadcastTxMethod string) *transacter {
 	return &transacter{
+		Config: 		   config,
+		qosPath: 		   qosPath,
+
 		Clictx: 		   clictx,
-		PreparedTx:		   map[int][]byte{},
+		PreparedTx:		   cmap.New(),
 
 		Target:            target,
 		Duration: 	   	   durationInt,
 		Rate:              rate,
-		Size:              size,
 		Connections:       connections,
 		BroadcastTxMethod: broadcastTxMethod,
 
@@ -90,12 +95,6 @@ func (t *transacter) Start() error {
 		}
 		t.conns[i] = c
 	}
-	fmt.Println("Preparing txs...")
-	t.prepareTx()
-	fmt.Println("All txs ready")
-
-	//fmt.Println(bytes.Equal(t.PreparedTx[0], t.PreparedTx[1]))
-
 	t.startingWg.Add(t.Connections)
 	t.endingWg.Add(2 * t.Connections)
 	for i := 0; i < t.Connections; i++ {
@@ -118,8 +117,7 @@ func (t *transacter)prepareTx() {
 	if maxGas < 0 {
 		errors.New("max-gas flag not correct")
 	}
-	// FIXME address and passphase should be saved into a file, and reading from it
-	bech32add, _ := types.GetAddrFromBech32("address1k65clfmyr30v20lga42srah0x7er95ludlyme4")
+	bech32add, _ := types.GetAddrFromBech32(t.Config.Addr)
 	tx := transfer.TxTransfer{
 		Senders: transfertypes.TransItems{
 			{types.Address(bech32add), types.NewInt(1), nil},
@@ -130,36 +128,24 @@ func (t *transacter)prepareTx() {
 	}
 	txStd := txs.NewTxStd(tx, "test", types.NewInt(maxGas))
 
-	signers := getSigners(t.Clictx, txStd.ITx.GetSigner())
+	signers := getSigners(t, txStd.ITx.GetSigner())
 	singerNonce := getSignerNonce(t.Clictx)
-	var txNumber int64
-
+	wg := sync.WaitGroup{}
 	for _, signerName := range signers {
-		//wg := sync.WaitGroup{}
-		//wg.Add(t.Rate * t.Duration)
-		//for i := 0; i < t.Duration; i++  {
-		//	//bz := make([]byte, t.Rate)
-		//	go func(i int) {
-		//		for j := 0; j < t.Rate; j++ {
-		//			go func(j int) {
-		//				txStd, _ = signStdTx(t.Clictx, signerName, singerNonce[signerName]+txNumber+1, txStd, "")
-		//				t.PreparedTx[int(txNumber)] = t.Clictx.Codec.MustMarshalBinaryBare(txStd)
-		//				txNumber++
-		//				wg.Done()
-		//			}(j)
-		//		}
-		//	}(i)
-		//}
-		//wg.Wait()
 		for i := 0; i < t.Duration; i++  {
-			//bz := make([]byte, t.Rate)
 			for j := 0; j < t.Rate; j++ {
-				signedTxStd, _ := signStdTx(t.Clictx, signerName, singerNonce[signerName]+txNumber+1, txStd, "")
-				t.PreparedTx[int(txNumber)] = t.Clictx.Codec.MustMarshalBinaryBare(signedTxStd)
-				txNumber++
+				fmt.Printf("%d percent prapared...\n", int(float32(i * t.Rate + j)/ float32(t.Duration * t.Rate) * 100))
+				wg.Add(1)
+				go func(i int, j int) {
+					defer wg.Done()
+					txNumber := int64(i * t.Rate + j)
+					txStd, _ = signStdTx(t.Clictx, signerName, singerNonce[signerName]+txNumber+1, txStd, "")
+					t.PreparedTx.Set(string(txNumber), t.Clictx.Codec.MustMarshalBinaryBare(txStd))
+				}(i, j)
 			}
 		}
 	}
+	wg.Wait()
 }
 
 func (t *transacter) sendLoop(connIndex int) {
@@ -192,7 +178,7 @@ func (t *transacter) sendLoop(connIndex int) {
 		t.endingWg.Done()
 	}()
 
-	var txNumber = 0
+	var txNumber int
 	for {
 		select {
 		case <-txsTicker.C:
@@ -207,10 +193,12 @@ func (t *transacter) sendLoop(connIndex int) {
 			fmt.Println("time RIGHT NOW: ", now)
 
 			for i := 0; i < t.Rate; i++ {
-
 				//// update tx number of the tx, and the corresponding hex
 				fmt.Println("txNumber: ", txNumber)
-				BroadcastTx(t.Clictx, t.PreparedTx[txNumber])
+				if tx, ok := t.PreparedTx.Get(string(txNumber)); ok {
+					tx := tx.([]byte)
+					BroadcastTx(t, tx)
+				}
 				paramsJSON, err := json.Marshal(map[string]interface{}{"tx": txNumber})
 
 				if err != nil {
@@ -234,7 +222,7 @@ func (t *transacter) sendLoop(connIndex int) {
 					return
 				}
 
-				// cache the time.Now() reads to save time.
+				// record time.Now() reads to save time.
 				if i%5 == 0 {
 					now = time.Now()
 					if now.After(endTime) {
@@ -283,6 +271,7 @@ func (t *transacter) sendLoop(connIndex int) {
 }
 
 func getSignerNonce(ctx clictx.CLIContext) (map[string]int64) {
+
 	keybase, _ := keys.GetKeyBaseFromDir(ctx, "/Users/shen/.qoscli")
 	var signerNonce = make(map[string]int64)
 	infos, _ := keybase.List()
@@ -294,34 +283,49 @@ func getSignerNonce(ctx clictx.CLIContext) (map[string]int64) {
 	return signerNonce
 }
 
-func BroadcastTx(ctx clictx.CLIContext, tx []byte) ([]byte, error) {
-	_, err := ctx.BroadcastTxSync(tx)
-	//_, err := ctx.BroadcastTxAsync(tx)
-	if err != nil {
-		fmt.Println("BroadcastTx error status: ", err)
+func BroadcastTx(t *transacter, tx []byte) ([]byte, error) {
+	switch t.BroadcastTxMethod {
+
+	case "broadcast_tx_async":
+		_, err := t.Clictx.BroadcastTxAsync(tx)
+		if err != nil {
+			fmt.Println("BroadcastTx error status: ", err)
+		}
+	case "broadcast_tx_sync":
+		_, err := t.Clictx.BroadcastTxSync(tx)
+		if err != nil {
+			fmt.Println("BroadcastTx error status: ", err)
+		}
+	case "":
+		_, err := t.Clictx.BroadcastTxAndAwaitCommit(tx)
+		if err != nil {
+			fmt.Println("BroadcastTx error status: ", err)
+		}
+	default:
+		fmt.Println("BroadcastTxMethod unexpected", )
 	}
+
 	return tx, nil
 }
 
-func getSigners(ctx clictx.CLIContext, txSignerAddrs []types.Address) []string {
-	var sortNames []string
+func getSigners(t *transacter, txSignerAddrs []types.Address) []string {
+	var Signers []string
 	for _, addr := range txSignerAddrs {
-		keybase, err := keys.GetKeyBaseFromDir(ctx, "/Users/shen/.qoscli")
-		info, _ := keybase.Get("mock1")
+		keybase, err := keys.GetKeyBaseFromDir(t.Clictx, t.qosPath)
+		info, _ := keybase.Get(t.Config.Name)
 
 		if err != nil {
 			panic(err.Error())
 		}
-
 		info, err = keybase.GetByAddress(addr)
 		if err != nil {
 			panic(fmt.Sprintf("signer addr: %s not in current keybase. err:%s", addr, err.Error()))
 		}
 
-		sortNames = append(sortNames, info.GetName())
+		Signers = append(Signers, info.GetName())
 	}
 
-	return sortNames
+	return Signers
 }
 
 func getDefaultAccountNonce(ctx clictx.CLIContext, address []byte) (int64, error) {
@@ -416,7 +420,6 @@ func (t *transacter) Stop() {
 	t.endingWg.Wait()
 	fmt.Println("conns stoped .....")
 	for _, c := range t.conns {
-
 		c.Close()
 	}
 }

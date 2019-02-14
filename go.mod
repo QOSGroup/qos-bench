@@ -6,6 +6,7 @@ require (
 	github.com/btcsuite/btcd v0.0.0-20181013004428-67e573d211ac // indirect
 	github.com/go-kit/kit v0.8.0
 	github.com/gorilla/websocket v1.4.0
+	github.com/orcaman/concurrent-map v0.0.0-20190107190726-7ed82d9cb717
 	github.com/pkg/errors v0.8.1
 	github.com/rcrowley/go-metrics v0.0.0-20181016184325-3113b8401b8a
 	github.com/spf13/viper v1.3.1
