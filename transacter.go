@@ -28,6 +28,8 @@ import (
 	//"github.com/QOSGroup/qos/app"
 	"github.com/QOSGroup/qbase/client/account"
 	"github.com/orcaman/concurrent-map"
+	"crypto/sha256"
+	"encoding/hex"
 )
 
 const (
@@ -126,9 +128,8 @@ func (t *transacter)prepareTx() {
 			{types.Address(bech32add), types.NewInt(1), nil},
 		},
 	}
-	txStd := txs.NewTxStd(tx, "test", types.NewInt(maxGas))
 
-	signers := getSigners(t, txStd.ITx.GetSigner())
+	signers := getSigners(t, tx.GetSigner())
 	singerNonce := getSignerNonce(t.Clictx)
 	wg := sync.WaitGroup{}
 	for _, signerName := range signers {
@@ -137,13 +138,23 @@ func (t *transacter)prepareTx() {
 				fmt.Printf("%d percent prapared...\n", int(float32(i * t.Rate + j)/ float32(t.Duration * t.Rate) * 100))
 				wg.Add(1)
 				go func(i int, j int) {
-					defer wg.Done()
+					txStd := txs.NewTxStd(tx, "test", types.NewInt(maxGas))
 					txNumber := int64(i * t.Rate + j)
 					txStd, _ = signStdTx(t.Clictx, signerName, singerNonce[signerName]+txNumber+1, txStd, "")
 					t.PreparedTx.Set(string(txNumber), t.Clictx.Codec.MustMarshalBinaryBare(txStd))
+					//logger.Info("key is: ", txNumber, " txStd.Nonce is: ", txStd.Signature[0].Nonce, " input nonce is: ", singerNonce[signerName]+txNumber+1)
+					wg.Done()
 				}(i, j)
 			}
 		}
+		//for i := 0; i < t.Duration; i++  {
+		//	for j := 0; j < t.Rate; j++ {
+		//		fmt.Printf("%d percent prapared...\n", int(float32(i * t.Rate + j)/ float32(t.Duration * t.Rate) * 100))
+		//		txNumber := int64(i * t.Rate + j)
+		//		txStd, _ = signStdTx(t.Clictx, signerName, singerNonce[signerName]+txNumber+1, txStd, "")
+		//		t.PreparedTx.Set(string(txNumber), t.Clictx.Codec.MustMarshalBinaryBare(txStd))
+		//	}
+		//}
 	}
 	wg.Wait()
 }
@@ -178,25 +189,44 @@ func (t *transacter) sendLoop(connIndex int) {
 		t.endingWg.Done()
 	}()
 
-	var txNumber int
+	var txNumber = 0
 	for {
 		select {
 		case <-txsTicker.C:
 			startTime := time.Now()
+			now := startTime
 			endTime := startTime.Add(time.Second)
-			numTxSent := t.Rate
+			//numTxSent := t.Rate
 			if !started {
 				t.startingWg.Done()
 				started = true
 			}
-			now := time.Now()
+
 			fmt.Println("time RIGHT NOW: ", now)
 
 			for i := 0; i < t.Rate; i++ {
-				//// update tx number of the tx, and the corresponding hex
+				if t.stopped {
+					// To cleanly close a connection, a client should send a close
+					// frame and wait for the server to close the connection.
+					c.SetWriteDeadline(time.Now().Add(sendTimeout))
+					err := c.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+					if err != nil {
+						err = errors.Wrap(err,
+							fmt.Sprintf("failed to write close message on conn #%d", connIndex))
+						logger.Error(err.Error())
+						t.connsBroken[connIndex] = true
+					}
+
+					return
+				}
+
 				fmt.Println("txNumber: ", txNumber)
 				if tx, ok := t.PreparedTx.Get(string(txNumber)); ok {
+					fmt.Println("txNumber is: ", txNumber)
+					txhash := sha256.Sum256(tx.([]byte))
+					fmt.Println("tx hash is: ", hex.EncodeToString(txhash[:]))
 					tx := tx.([]byte)
+					fmt.Println(tx)
 					BroadcastTx(t, tx)
 				}
 				paramsJSON, err := json.Marshal(map[string]interface{}{"tx": txNumber})
@@ -222,20 +252,14 @@ func (t *transacter) sendLoop(connIndex int) {
 					return
 				}
 
-				// record time.Now() reads to save time.
-				if i%5 == 0 {
-					now = time.Now()
-					if now.After(endTime) {
-						// Plus one accounts for sending this tx
-						numTxSent = i + 1
-						break
-					}
+				if  time.Now().After(endTime) {
+					break
 				}
 				txNumber++
 			}
 
 			timeToSend := time.Since(startTime)
-			logger.Info(fmt.Sprintf("sent %d transactions", numTxSent), "took", timeToSend)
+			logger.Info(fmt.Sprintf("sent %d transactions", txNumber), "took", timeToSend)
 			if timeToSend < 1*time.Second {
 				sleepTime := time.Second - timeToSend
 				logger.Debug(fmt.Sprintf("connection #%d is sleeping for %f seconds", connIndex, sleepTime.Seconds()))
@@ -251,21 +275,6 @@ func (t *transacter) sendLoop(connIndex int) {
 				logger.Error(err.Error())
 				t.connsBroken[connIndex] = true
 			}
-		}
-
-		if t.stopped {
-			// To cleanly close a connection, a client should send a close
-			// frame and wait for the server to close the connection.
-			c.SetWriteDeadline(time.Now().Add(sendTimeout))
-			err := c.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-			if err != nil {
-				err = errors.Wrap(err,
-					fmt.Sprintf("failed to write close message on conn #%d", connIndex))
-				logger.Error(err.Error())
-				t.connsBroken[connIndex] = true
-			}
-
-			return
 		}
 	}
 }
@@ -296,7 +305,7 @@ func BroadcastTx(t *transacter, tx []byte) ([]byte, error) {
 		if err != nil {
 			fmt.Println("BroadcastTx error status: ", err)
 		}
-	case "":
+	case "broadcast_tx_commit":
 		_, err := t.Clictx.BroadcastTxAndAwaitCommit(tx)
 		if err != nil {
 			fmt.Println("BroadcastTx error status: ", err)
@@ -346,6 +355,7 @@ func signStdTx(ctx clictx.CLIContext, signerKeyName string, nonce int64, txStd *
 		return nil, err
 	}
 
+	//txStdSigned := txStd
 	addr := info.GetAddress()
 	ok := false
 

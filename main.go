@@ -21,6 +21,7 @@ import (
 
 var logger = log.NewNopLogger()
 
+// FIXME config slice
 type Config struct {
 	Name	string	`json:name`
 	Addr  	string 	`json:"address"`
@@ -93,6 +94,9 @@ Examples:
 
 	// Parse home directory
 	path, err := parsePath(qosPath)
+	if err != nil {
+		printErrorAndExit(err.Error())
+	}
 
 	// Init value
 	endpoints     := strings.Split(flagSet.Arg(0), ",")
@@ -117,6 +121,7 @@ Examples:
 		txsRate,
 		"broadcast_tx_"+broadcastTxMethod,
 	)
+	fmt.Println("len(transacters[0].PreparedTx) is: ", transacters[0].PreparedTx.Count())
 
 	// Time duration
 	timeStart := time.Now()
@@ -125,7 +130,7 @@ Examples:
 	timeEnd := timeStart.Add(duration)
 	logger.Info("End time for calculation", "t", timeEnd)
 
-	// Start broadcast
+	// Start broadcast tx
 	for _, t := range transacters {
 		t.Start()
 	}
@@ -171,10 +176,6 @@ Examples:
 	printStatistics(stats, outputFormat)
 }
 
-//func NewJsonStruct() *JsonStruct {
-//	return &JsonStruct{}
-//}
-
 func Load(filename string) (Config, error) {
 	var config Config
 
@@ -183,13 +184,11 @@ func Load(filename string) (Config, error) {
 	if err != nil {
 		return config, err
 	}
-	fmt.Println("data", string(data))
 	//读取的数据为json格式，需要进行解码
 	err = json.Unmarshal(data, &config)
 	if err != nil {
 		return config, err
 	}
-	fmt.Println(config.Addr)
 	return config, err
 }
 
@@ -203,7 +202,6 @@ func parsePath(qosPath string) (string, error) {
 			user, err := user.Current()
 			if nil == err {
 				path = filepath.Join(user.HomeDir, ".qoscli")
-				fmt.Println("path is : ", path)
 			}
 		default:
 			wd, _ := os.Getwd()
@@ -217,17 +215,6 @@ func parsePath(qosPath string) (string, error) {
 		printErrorAndExit(err.Error())
 	}
 	return path, err
-}
-
-func checkQOSPath(qosPath string) (bool, error) {
-	_, err := os.Stat(qosPath)
-	if err == nil {
-		return true, nil
-	}
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	return false, err
 }
 
 func latestBlockHeight(client tmrpc.Client) int64 {
@@ -253,7 +240,6 @@ func countCrashes(crashes []bool) int {
 func prepareTransacters(
 	config Config,
 	qosPath string,
-
 	client tmrpc.Client,
 	endpoints []string,
 	connections,
@@ -261,7 +247,7 @@ func prepareTransacters(
 	txsRate int,
 	broadcastTxMethod string,
 ) []*transacter {
-	fmt.Println("Preparing txs ...")
+	fmt.Println("Start Preparing Test Transactions ...")
 	transacters := make([]*transacter, len(endpoints))
 	ctx := clictx.NewCLIContext().WithCodec(app.MakeCodec()).WithClient(client)
 
