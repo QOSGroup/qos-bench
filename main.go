@@ -43,13 +43,15 @@ func main() {
 	flagSet.StringVar(&broadcastTxMethod, "broadcast-tx-method", "async", "Broadcast method: async (no guarantees; fastest), sync (ensures tx is checked) or commit (ensures tx is checked and committed; slowest)")
 	flagSet.BoolVar(&verbose, "v", false, "Verbose output")
 	flagSet.Usage = func() {
-		fmt.Println(`QOS blockchain benchmarking tool.
+		fmt.Println(`
+			QOS blockchain benchmarking tool.
 
-Usage:
-	qos-bench [-c 1] [-T 10] [-r 1000] [endpoints] [-output-format <plain|json> [-broadcast-tx-method <async|sync|commit>]]
+			Usage:
+				qos-bench [-c 1] [-T 10] [-r 1000] [endpoints] [-output-format <plain|json> [-broadcast-tx-method <async|sync|commit>]]
 
-Examples:
-	qos-bench -v -T 10 -r 10 -output-format plain -broadcast-tx-method async localhost:26657`)
+			Examples:
+				qos-bench -v -T 10 -r 10 -output-format plain -broadcast-tx-method async localhost:26657
+			`)
 		fmt.Println("Flags:")
 		flagSet.PrintDefaults()
 	}
@@ -121,7 +123,6 @@ Examples:
 		txsRate,
 		"broadcast_tx_"+broadcastTxMethod,
 	)
-	fmt.Println("len(transacters[0].PreparedTx) is: ", transacters[0].PreparedTx.Count())
 
 	// Time duration
 	timeStart := time.Now()
@@ -130,7 +131,7 @@ Examples:
 	timeEnd := timeStart.Add(duration)
 	logger.Info("End time for calculation", "t", timeEnd)
 
-	// Start broadcast tx
+	// Start broadcasting tx
 	for _, t := range transacters {
 		t.Start()
 	}
@@ -257,7 +258,7 @@ func prepareTransacters(
 		t.prepareTx()
 		transacters[i] = t
 	}
-	fmt.Println("Txs ready !!!")
+	fmt.Println("Test Transactions All Ready !!!")
 	return transacters
 }
 

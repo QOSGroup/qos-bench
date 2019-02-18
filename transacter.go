@@ -28,8 +28,6 @@ import (
 	//"github.com/QOSGroup/qos/app"
 	"github.com/QOSGroup/qbase/client/account"
 	"github.com/orcaman/concurrent-map"
-	"crypto/sha256"
-	"encoding/hex"
 )
 
 const (
@@ -135,12 +133,12 @@ func (t *transacter)prepareTx() {
 	for _, signerName := range signers {
 		for i := 0; i < t.Duration; i++  {
 			for j := 0; j < t.Rate; j++ {
-				fmt.Printf("%d percent prapared...\n", int(float32(i * t.Rate + j)/ float32(t.Duration * t.Rate) * 100))
+				fmt.Printf("%d Percent In Prograss ...\n", int(float32(i * t.Rate + j)/ float32(t.Duration * t.Rate) * 100))
 				wg.Add(1)
 				go func(i int, j int) {
 					txStd := txs.NewTxStd(tx, "test", types.NewInt(maxGas))
 					txNumber := int64(i * t.Rate + j)
-					txStd, _ = signStdTx(t.Clictx, signerName, singerNonce[signerName]+txNumber+1, txStd, "")
+					txStd, _ = signStdTx(t, signerName, singerNonce[signerName]+txNumber+1, txStd, "")
 					t.PreparedTx.Set(string(txNumber), t.Clictx.Codec.MustMarshalBinaryBare(txStd))
 					//logger.Info("key is: ", txNumber, " txStd.Nonce is: ", txStd.Signature[0].Nonce, " input nonce is: ", singerNonce[signerName]+txNumber+1)
 					wg.Done()
@@ -196,7 +194,6 @@ func (t *transacter) sendLoop(connIndex int) {
 			startTime := time.Now()
 			now := startTime
 			endTime := startTime.Add(time.Second)
-			//numTxSent := t.Rate
 			if !started {
 				t.startingWg.Done()
 				started = true
@@ -216,21 +213,16 @@ func (t *transacter) sendLoop(connIndex int) {
 						logger.Error(err.Error())
 						t.connsBroken[connIndex] = true
 					}
-
 					return
 				}
 
-				fmt.Println("txNumber: ", txNumber)
 				if tx, ok := t.PreparedTx.Get(string(txNumber)); ok {
 					fmt.Println("txNumber is: ", txNumber)
-					txhash := sha256.Sum256(tx.([]byte))
-					fmt.Println("tx hash is: ", hex.EncodeToString(txhash[:]))
 					tx := tx.([]byte)
-					fmt.Println(tx)
 					BroadcastTx(t, tx)
 				}
-				paramsJSON, err := json.Marshal(map[string]interface{}{"tx": txNumber})
 
+				paramsJSON, err := json.Marshal(map[string]interface{}{"tx": txNumber})
 				if err != nil {
 					fmt.Printf("failed to encode params: %v\n", err)
 					os.Exit(1)
@@ -349,13 +341,12 @@ func getDefaultAccountNonce(ctx clictx.CLIContext, address []byte) (int64, error
 	return account.GetAccountNonce(newCtx, address)
 }
 
-func signStdTx(ctx clictx.CLIContext, signerKeyName string, nonce int64, txStd *txs.TxStd, fromChainID string) (*txs.TxStd, error) {
-	info, err := keys.GetKeyInfo(ctx, signerKeyName)
+func signStdTx(t *transacter, signerKeyName string, nonce int64, txStd *txs.TxStd, fromChainID string) (*txs.TxStd, error) {
+	info, err := keys.GetKeyInfo(t.Clictx, signerKeyName)
 	if err != nil {
 		return nil, err
 	}
 
-	//txStdSigned := txStd
 	addr := info.GetAddress()
 	ok := false
 
@@ -370,7 +361,7 @@ func signStdTx(ctx clictx.CLIContext, signerKeyName string, nonce int64, txStd *
 	}
 
 	sigdata := txStd.BuildSignatureBytes(nonce, fromChainID)
-	sig, pubkey := signData(ctx, signerKeyName, sigdata)
+	sig, pubkey := signData(t, signerKeyName, sigdata)
 	txStd.Signature = make([]txs.Signature, 1)
 	txStd.Signature[0] = txs.Signature{
 		Pubkey:    pubkey,
@@ -381,21 +372,14 @@ func signStdTx(ctx clictx.CLIContext, signerKeyName string, nonce int64, txStd *
 	return txStd, nil
 }
 
-func signData(ctx clictx.CLIContext, name string, data []byte) ([]byte, crypto.PubKey) {
+func signData(t *transacter, name string, data []byte) ([]byte, crypto.PubKey) {
 	// FIXME password shoud be read from config file
-	pass := "12345678"
-	//pass, err := keys.GetPassphrase(ctx, name)
-	////fmt.Println("pass is:", pass)
-	//if err != nil {
-	//	panic(fmt.Sprintf("Get %s Passphrase error: %s", name, err.Error()))
-	//}
-
-	keybase, err := keys.GetKeyBase(ctx)
+	keybase, err := keys.GetKeyBase(t.Clictx)
 	if err != nil {
 		panic(err.Error())
 	}
 
-	sig, pubkey, err := keybase.Sign(name, pass, data)
+	sig, pubkey, err := keybase.Sign(name, t.Config.Pass, data)
 	if err != nil {
 		panic(err.Error())
 	}
