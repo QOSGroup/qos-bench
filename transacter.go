@@ -25,7 +25,6 @@ import (
 	"github.com/QOSGroup/qbase/client/keys"
 	"bytes"
 	"github.com/tendermint/tendermint/crypto"
-	//"github.com/QOSGroup/qos/app"
 	"github.com/QOSGroup/qbase/client/account"
 	"github.com/orcaman/concurrent-map"
 )
@@ -112,7 +111,7 @@ func connect(host string) (*websocket.Conn, *http.Response, error) {
 	return websocket.DefaultDialer.Dial(u.String(), nil)
 }
 
-func (t *transacter)prepareTx() {
+func (t *transacter)PrepareTx() {
 	maxGas := viper.GetInt64(cflags.FlagMaxGas)
 	if maxGas < 0 {
 		errors.New("max-gas flag not correct")
@@ -127,8 +126,8 @@ func (t *transacter)prepareTx() {
 		},
 	}
 
-	signers := getSigners(t, tx.GetSigner())
-	singerNonce := getSignerNonce(t.Clictx)
+	signers := GetSigners(t, tx.GetSigner())
+	singerNonce := GetSignerNonce(t)
 	wg := sync.WaitGroup{}
 	for _, signerName := range signers {
 		for i := 0; i < t.Duration; i++  {
@@ -138,7 +137,7 @@ func (t *transacter)prepareTx() {
 				go func(i int, j int) {
 					txStd := txs.NewTxStd(tx, "test", types.NewInt(maxGas))
 					txNumber := int64(i * t.Rate + j)
-					txStd, _ = signStdTx(t, signerName, singerNonce[signerName]+txNumber+1, txStd, "")
+					txStd, _ = SignStdTx(t, signerName, singerNonce[signerName]+txNumber+1, txStd, "")
 					t.PreparedTx.Set(string(txNumber), t.Clictx.Codec.MustMarshalBinaryBare(txStd))
 					//logger.Info("key is: ", txNumber, " txStd.Nonce is: ", txStd.Signature[0].Nonce, " input nonce is: ", singerNonce[signerName]+txNumber+1)
 					wg.Done()
@@ -271,13 +270,12 @@ func (t *transacter) sendLoop(connIndex int) {
 	}
 }
 
-func getSignerNonce(ctx clictx.CLIContext) (map[string]int64) {
-
-	keybase, _ := keys.GetKeyBaseFromDir(ctx, "/Users/shen/.qoscli")
+func GetSignerNonce(t *transacter) (map[string]int64) {
+	keybase, _ := keys.GetKeyBaseFromDir(t.Clictx, t.qosPath)
 	var signerNonce = make(map[string]int64)
 	infos, _ := keybase.List()
 	for _, info := range infos {
-		nonce, _ := getDefaultAccountNonce(ctx, info.GetAddress().Bytes())
+		nonce, _ := getDefaultAccountNonce(t.Clictx, info.GetAddress().Bytes())
 		signerNonce[info.GetName()] = nonce
 	}
 
@@ -309,7 +307,7 @@ func BroadcastTx(t *transacter, tx []byte) ([]byte, error) {
 	return tx, nil
 }
 
-func getSigners(t *transacter, txSignerAddrs []types.Address) []string {
+func GetSigners(t *transacter, txSignerAddrs []types.Address) []string {
 	var Signers []string
 	for _, addr := range txSignerAddrs {
 		keybase, err := keys.GetKeyBaseFromDir(t.Clictx, t.qosPath)
@@ -341,7 +339,7 @@ func getDefaultAccountNonce(ctx clictx.CLIContext, address []byte) (int64, error
 	return account.GetAccountNonce(newCtx, address)
 }
 
-func signStdTx(t *transacter, signerKeyName string, nonce int64, txStd *txs.TxStd, fromChainID string) (*txs.TxStd, error) {
+func SignStdTx(t *transacter, signerKeyName string, nonce int64, txStd *txs.TxStd, fromChainID string) (*txs.TxStd, error) {
 	info, err := keys.GetKeyInfo(t.Clictx, signerKeyName)
 	if err != nil {
 		return nil, err
@@ -361,7 +359,7 @@ func signStdTx(t *transacter, signerKeyName string, nonce int64, txStd *txs.TxSt
 	}
 
 	sigdata := txStd.BuildSignatureBytes(nonce, fromChainID)
-	sig, pubkey := signData(t, signerKeyName, sigdata)
+	sig, pubkey := SignData(t, signerKeyName, sigdata)
 	txStd.Signature = make([]txs.Signature, 1)
 	txStd.Signature[0] = txs.Signature{
 		Pubkey:    pubkey,
@@ -372,7 +370,7 @@ func signStdTx(t *transacter, signerKeyName string, nonce int64, txStd *txs.TxSt
 	return txStd, nil
 }
 
-func signData(t *transacter, name string, data []byte) ([]byte, crypto.PubKey) {
+func SignData(t *transacter, name string, data []byte) ([]byte, crypto.PubKey) {
 	// FIXME password shoud be read from config file
 	keybase, err := keys.GetKeyBase(t.Clictx)
 	if err != nil {

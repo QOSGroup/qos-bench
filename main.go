@@ -23,7 +23,7 @@ var logger = log.NewNopLogger()
 
 // FIXME config slice
 type Config struct {
-	Name	string	`json:name`
+	Name	string	`json:"name"`
 	Addr  	string 	`json:"address"`
 	Pass 	string	`json:"password"`
 }
@@ -36,34 +36,35 @@ func main() {
 	flagSet := flag.NewFlagSet("qos-bench", flag.ExitOnError)
 	flagSet.IntVar(&connections, "c", 1, "Connections to keep open per endpoint")
 	flagSet.IntVar(&durationInt, "T", 30, "Exit after the specified amount of time in seconds")
-	flagSet.IntVar(&txsRate, "r", 100, "Txs per second to send in a connection")
-	flagSet.StringVar(&qosPath, "h", "~/.qoscli", "Load account info from kv-store in this path")
-	flagSet.StringVar(&configFile, "f", "./pass.json", "Config accounts to send test transactions")
+	flagSet.IntVar(&txsRate, "R", 100, "Txs per second to send in a connection")
+	flagSet.StringVar(&qosPath, "home", "~/.qoscli", "Setup qos home path")
+	flagSet.StringVar(&configFile, "file", "./config.json", "File deployed from which account to prepare Test Transactions")
 	flagSet.StringVar(&outputFormat, "output-format", "plain", "Output format: plain or json")
 	flagSet.StringVar(&broadcastTxMethod, "broadcast-tx-method", "async", "Broadcast method: async (no guarantees; fastest), sync (ensures tx is checked) or commit (ensures tx is checked and committed; slowest)")
 	flagSet.BoolVar(&verbose, "v", false, "Verbose output")
 	flagSet.Usage = func() {
-		fmt.Println(`
-			QOS blockchain benchmarking tool.
+		fmt.Printf(`
+QOS blockchain benchmarking tool.
 
-			Usage:
-				qos-bench [-c 1] [-T 10] [-r 1000] [endpoints] [-output-format <plain|json> [-broadcast-tx-method <async|sync|commit>]]
+Usage:
+	qos-bench [-c 1] [-T 10] [-r 1000] [endpoints] [-output-format <plain|json> [-broadcast-tx-method <async|sync|commit>]]
 
-			Examples:
-				qos-bench -v -T 10 -r 10 -output-format plain -broadcast-tx-method async localhost:26657
-			`)
+Examples:
+	qos-bench -v -T 10 -r 10 -output-format plain -broadcast-tx-method async localhost:26657
+`)
 		fmt.Println("Flags:")
+
 		flagSet.PrintDefaults()
 	}
 
-	// Parse flags
+	// Parse endpoint.
 	flagSet.Parse(os.Args[1:])
 	if flagSet.NArg() == 0 {
 		flagSet.Usage()
 		os.Exit(1)
 	}
 
-	// Enable verbose module
+	// Enable verbose module.
 	if verbose {
 		if outputFormat == "json" {
 			printErrorAndExit("Verbose mode not supported with json output.")
@@ -81,38 +82,38 @@ func main() {
 		fmt.Printf("Running %ds test @ %s\n", durationInt, flagSet.Arg(0))
 	}
 
-	// Check broadcast  method
+	// Check broadcast method.
 	if broadcastTxMethod != "async" &&
 		broadcastTxMethod != "sync" &&
 		broadcastTxMethod != "commit" {
 		printErrorAndExit("broadcast-tx-method should be either 'sync', 'async' or 'commit'.")
 	}
 
-	// Load config file
+	// Load config file.
 	config, err := Load(configFile)
 	if err != nil {
 		printErrorAndExit(err.Error())
 	}
 
-	// Parse home directory
-	path, err := parsePath(qosPath)
+	// Parse and find qos home directory.
+	path, err := ParsePath(qosPath)
 	if err != nil {
 		printErrorAndExit(err.Error())
 	}
 
-	// Init value
+	// Init values.
 	endpoints     := strings.Split(flagSet.Arg(0), ",")
 	client        := tmrpc.NewHTTP(endpoints[0], "/websocket")
-	initialHeight := latestBlockHeight(client)
+	initialHeight := LatestBlockHeight(client)
 	logger.Info("Latest block height", "h", initialHeight)
 
-	// Log out test parameter
+	// Log out test parameter.
 	fmt.Println("time duration: ", durationInt)
 	fmt.Println("transacter rate: ", txsRate)
 	fmt.Println("transacter broadcast method: ", broadcastTxMethod)
 
-	// Prepare qos transactions, this step takes some times
-	transacters := prepareTransacters(
+	// Prepare qos transactions, this step takes some times.
+	transacters := PrepareTransacters(
 		config,
 		path,
 
@@ -124,14 +125,14 @@ func main() {
 		"broadcast_tx_"+broadcastTxMethod,
 	)
 
-	// Time duration
+	// Time duration.
 	timeStart := time.Now()
 	logger.Info("Time last transacter started", "t", timeStart)
 	duration := time.Duration(durationInt) * time.Second
 	timeEnd := timeStart.Add(duration)
 	logger.Info("End time for calculation", "t", timeEnd)
 
-	// Start broadcasting tx
+	// Start broadcasting tx.
 	for _, t := range transacters {
 		t.Start()
 	}
@@ -162,7 +163,7 @@ func main() {
 
 	logger.Debug("Time all transacters stopped", "t", time.Now())
 
-	// State txs from initialHeight to block during durationInt
+	// State txs from initial height to current height.
 	stats, err := calculateStatistics(
 		client,
 		initialHeight,
@@ -173,19 +174,19 @@ func main() {
 		printErrorAndExit(err.Error())
 	}
 
-	// Print it in format
+	// Print it in format.
 	printStatistics(stats, outputFormat)
 }
 
 func Load(filename string) (Config, error) {
 	var config Config
 
-	//ReadFile函数会读取文件的全部内容，并将结果以[]byte类型返回
+	// ReadFile func read all data from filename, and return as []byte type.
 	data, err := ioutil.ReadFile(filename)
 	if err != nil {
 		return config, err
 	}
-	//读取的数据为json格式，需要进行解码
+	// Read in json format，decode into data struct
 	err = json.Unmarshal(data, &config)
 	if err != nil {
 		return config, err
@@ -193,11 +194,9 @@ func Load(filename string) (Config, error) {
 	return config, err
 }
 
-func parsePath(qosPath string) (string, error) {
+func ParsePath(qosPath string) (string, error) {
 	var path string
-	if filepath.IsAbs(qosPath) {
-		return qosPath, nil
-	} else {
+	if !filepath.IsAbs(qosPath) {
 		switch qosPath {
 		case "~/.qoscli":
 			user, err := user.Current()
@@ -218,7 +217,7 @@ func parsePath(qosPath string) (string, error) {
 	return path, err
 }
 
-func latestBlockHeight(client tmrpc.Client) int64 {
+func LatestBlockHeight(client tmrpc.Client) int64 {
 
 	status, err := client.Status()
 	if err != nil {
@@ -238,7 +237,7 @@ func countCrashes(crashes []bool) int {
 	return count
 }
 
-func prepareTransacters(
+func PrepareTransacters(
 	config Config,
 	qosPath string,
 	client tmrpc.Client,
@@ -255,7 +254,7 @@ func prepareTransacters(
 	for i, e := range endpoints {
 		t := newTransacter(config, qosPath, ctx, e, connections, durationInt, txsRate, broadcastTxMethod)
 		t.SetLogger(logger)
-		t.prepareTx()
+		t.PrepareTx()
 		transacters[i] = t
 	}
 	fmt.Println("Test Transactions All Ready !!!")
