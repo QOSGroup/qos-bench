@@ -1,6 +1,12 @@
 # QOS benchmark tool
 
-## 安装
+## 依赖
+本工具运行在QOS节点上，安装步骤请参照：
+
+[QOS节点安装文档](https://github.com/QOSGroup/qos/blob/master/docs/install/installation.md
+)
+
+## Benchmark 工具安装
 ```bash
 $ git clone https://github.com/QOSGroup/qos-bench
 $ cd qos-bench
