@@ -132,7 +132,6 @@ func (t *transacter)PrepareTx() {
 	for _, signerName := range signers {
 		for i := 0; i < t.Duration; i++  {
 			for j := 0; j < t.Rate; j++ {
-				fmt.Printf("%d Percent In Prograss ...\n", int(float32(i * t.Rate + j)/ float32(t.Duration * t.Rate) * 100))
 				wg.Add(1)
 				go func(i int, j int) {
 					txStd := txs.NewTxStd(tx, "test", types.NewInt(maxGas))
@@ -140,6 +139,7 @@ func (t *transacter)PrepareTx() {
 					txStd, _ = SignStdTx(t, signerName, singerNonce[signerName]+txNumber+1, txStd, "")
 					t.PreparedTx.Set(string(txNumber), t.Clictx.Codec.MustMarshalBinaryBare(txStd))
 					//logger.Info("key is: ", txNumber, " txStd.Nonce is: ", txStd.Signature[0].Nonce, " input nonce is: ", singerNonce[signerName]+txNumber+1)
+					fmt.Printf("%d Percent In Prograss ...\n", int(float32(i * t.Rate + j)/ float32(t.Duration * t.Rate) * 100))
 					wg.Done()
 				}(i, j)
 			}
@@ -376,7 +376,6 @@ func SignData(t *transacter, name string, data []byte) ([]byte, crypto.PubKey) {
 	if err != nil {
 		panic(err.Error())
 	}
-
 	sig, pubkey, err := keybase.Sign(name, t.Config.Pass, data)
 	if err != nil {
 		panic(err.Error())

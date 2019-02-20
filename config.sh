@@ -6,7 +6,7 @@ address=`echo $pass | qoscli keys add $name | awk '{if(NR==2){print $3};}'`
 echo "{
 \"name\": \"$name\",
 \"address\": \"$address\",
-\"pass\": \"$pass\"
+\"password\": \"$pass\"
 }" > ./config.json
 
 # assign asset 
