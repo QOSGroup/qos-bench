@@ -10,6 +10,5 @@ require (
 	github.com/pkg/errors v0.8.1
 	github.com/rcrowley/go-metrics v0.0.0-20181016184325-3113b8401b8a
 	github.com/spf13/viper v1.3.1
-	github.com/stretchr/testify v1.2.2
 	github.com/tendermint/tendermint v0.29.1
 )

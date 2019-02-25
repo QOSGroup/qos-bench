@@ -132,14 +132,14 @@ func (t *transacter)PrepareTx() {
 	for _, signerName := range signers {
 		for i := 0; i < t.Duration; i++  {
 			for j := 0; j < t.Rate; j++ {
+				fmt.Printf("%d Percent In Prograss ...\n", int(float32(i * t.Rate + j)/ float32(t.Duration * t.Rate) * 100))
 				wg.Add(1)
 				go func(i int, j int) {
 					txStd := txs.NewTxStd(tx, "test", types.NewInt(maxGas))
-					txNumber := int64(i * t.Rate + j)
-					txStd, _ = SignStdTx(t, signerName, singerNonce[signerName]+txNumber+1, txStd, "")
+					txNumber := int64(i * t.Rate + j) + 1
+					txStd, _ = SignStdTx(t, signerName, singerNonce[signerName]+txNumber, txStd, "")
 					t.PreparedTx.Set(string(txNumber), t.Clictx.Codec.MustMarshalBinaryBare(txStd))
 					//logger.Info("key is: ", txNumber, " txStd.Nonce is: ", txStd.Signature[0].Nonce, " input nonce is: ", singerNonce[signerName]+txNumber+1)
-					fmt.Printf("%d Percent In Prograss ...\n", int(float32(i * t.Rate + j)/ float32(t.Duration * t.Rate) * 100))
 					wg.Done()
 				}(i, j)
 			}
@@ -220,6 +220,8 @@ func (t *transacter) sendLoop(connIndex int) {
 					tx := tx.([]byte)
 					BroadcastTx(t, tx)
 				}
+				// put tx number ++ here, force every broadcast is recorded
+				txNumber++
 
 				paramsJSON, err := json.Marshal(map[string]interface{}{"tx": txNumber})
 				if err != nil {
@@ -242,11 +244,9 @@ func (t *transacter) sendLoop(connIndex int) {
 					logger.Error(err.Error())
 					return
 				}
-
 				if  time.Now().After(endTime) {
 					break
 				}
-				txNumber++
 			}
 
 			timeToSend := time.Since(startTime)

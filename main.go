@@ -104,8 +104,6 @@ Examples:
 	// Init values.
 	endpoints     := strings.Split(flagSet.Arg(0), ",")
 	client        := tmrpc.NewHTTP(endpoints[0], "/websocket")
-	initialHeight := LatestBlockHeight(client)
-	logger.Info("Latest block height", "h", initialHeight)
 
 	// Log out test parameter.
 	fmt.Println("time duration: ", durationInt)
@@ -131,6 +129,10 @@ Examples:
 	duration := time.Duration(durationInt) * time.Second
 	timeEnd := timeStart.Add(duration)
 	logger.Info("End time for calculation", "t", timeEnd)
+
+	// anchor the last block
+	initialHeight := LatestBlockHeight(client)
+	logger.Info("Latest block height", "h", initialHeight)
 
 	// Start broadcasting tx.
 	for _, t := range transacters {
@@ -168,6 +170,7 @@ Examples:
 		client,
 		initialHeight,
 		timeStart,
+		timeEnd,
 		durationInt,
 	)
 	if err != nil {

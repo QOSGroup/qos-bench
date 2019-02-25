@@ -5,7 +5,6 @@ import (
 	"github.com/rcrowley/go-metrics"
 	"fmt"
 	tmrpc "github.com/tendermint/tendermint/rpc/client"
-	"github.com/tendermint/tendermint/types"
 	"math"
 	"encoding/json"
 	"os"
@@ -17,65 +16,20 @@ type statistics struct {
 	BlocksThroughput metrics.Histogram `json:"blocks_per_sec"`
 }
 
+// calculateStatistics calculates the tx / second, and blocks / second based
+// off of the number the transactions and number of blocks that occurred from
+// the start block, and the end time.
 func calculateStatistics(
 	client tmrpc.Client,
 	minHeight int64,
-	timeStart time.Time,
+	timeStart, timeStop time.Time,
 	duration int,
 ) (*statistics, error) {
-	timeEnd := timeStart.Add(time.Duration(duration) * time.Second)
-
 	stats := &statistics{
 		BlocksThroughput: metrics.NewHistogram(metrics.NewUniformSample(1000)),
 		TxsThroughput:    metrics.NewHistogram(metrics.NewUniformSample(1000)),
 	}
 
-	var (
-		numBlocksPerSec = make(map[int64]int64)
-		numTxsPerSec    = make(map[int64]int64)
-	)
-
-	// because during some seconds blocks won't be created...
-	for i := int64(0); i < int64(duration); i++ {
-		numBlocksPerSec[i] = 0
-		numTxsPerSec[i] = 0
-	}
-
-	blockMetas, err := getBlockMetas(client, minHeight, timeStart, timeEnd)
-	if err != nil {
-		return nil, err
-	}
-
-	// iterates from max height to min height
-	for _, blockMeta := range blockMetas {
-		// check if block was created after timeStart
-		if blockMeta.Header.Time.Before(timeStart) {
-			break
-		}
-
-		// check if block was created before timeEnd
-		if blockMeta.Header.Time.After(timeEnd) {
-			continue
-		}
-		sec := secondsSinceTimeStart(timeStart, blockMeta.Header.Time)
-
-		// increase number of blocks for that second
-		numBlocksPerSec[sec]++
-
-		// increase number of txs for that second
-		numTxsPerSec[sec] += blockMeta.Header.NumTxs
-		logger.Debug(fmt.Sprintf("%d txs at block height %d", blockMeta.Header.NumTxs, blockMeta.Header.Height))
-	}
-
-	for i := int64(0); i < int64(duration); i++ {
-		stats.BlocksThroughput.Update(numBlocksPerSec[i])
-		stats.TxsThroughput.Update(numTxsPerSec[i])
-	}
-
-	return stats, nil
-}
-
-func getBlockMetas(client tmrpc.Client, minHeight int64, timeStart, timeEnd time.Time) ([]*types.BlockMeta, error) {
 	// get blocks between minHeight and last height
 	// This returns max(minHeight,(last_height - 20)) to last_height
 	info, err := client.BlockchainInfo(minHeight, 0)
@@ -100,7 +54,46 @@ func getBlockMetas(client tmrpc.Client, minHeight int64, timeStart, timeEnd time
 		offset = len(blockMetas)
 	}
 
-	return blockMetas, nil
+	var (
+		numBlocksPerSec = make(map[int64]int64)
+		numTxsPerSec    = make(map[int64]int64)
+	)
+
+	// because during some seconds blocks won't be created...
+	for i := int64(0); i < int64(duration); i++ {
+		numBlocksPerSec[i] = 0
+		numTxsPerSec[i] = 0
+	}
+
+	// iterates from max height to min height
+	for _, blockMeta := range blockMetas {
+		// check if block was created after timeStart
+		if blockMeta.Header.Time.Before(timeStart) {
+			break
+		}
+
+		// check if block was created before timeStop
+		if blockMeta.Header.Time.After(timeStop) {
+			continue
+		}
+		sec := secondsSinceTimeStart(timeStart, blockMeta.Header.Time)
+
+		// increase number of blocks for that second
+		numBlocksPerSec[sec]++
+
+		// increase number of txs for that second
+		numTxsPerSec[sec] += blockMeta.Header.NumTxs
+	}
+
+	for _, n := range numBlocksPerSec {
+		stats.BlocksThroughput.Update(n)
+	}
+
+	for _, n := range numTxsPerSec {
+		stats.TxsThroughput.Update(n)
+	}
+
+	return stats, nil
 }
 
 func secondsSinceTimeStart(timeStart, timePassed time.Time) int64 {
