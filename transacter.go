@@ -128,6 +128,7 @@ func (t *transacter)PrepareTx() {
 
 	signers := GetSigners(t, tx.GetSigner())
 	singerNonce := GetSignerNonce(t)
+	signerPrivkey := GetSignerPrikey(t)
 	wg := sync.WaitGroup{}
 	for _, signerName := range signers {
 		for i := 0; i < t.Duration; i++  {
@@ -137,21 +138,12 @@ func (t *transacter)PrepareTx() {
 				go func(i int, j int) {
 					txStd := txs.NewTxStd(tx, "test", types.NewInt(maxGas))
 					txNumber := int64(i * t.Rate + j) + 1
-					txStd, _ = SignStdTx(t, signerName, singerNonce[signerName]+txNumber, txStd, "")
+					txStd, _ = SignStdTx(txStd, signerPrivkey[signerName], singerNonce[signerName]+txNumber, "")
 					t.PreparedTx.Set(string(txNumber), t.Clictx.Codec.MustMarshalBinaryBare(txStd))
-					//logger.Info("key is: ", txNumber, " txStd.Nonce is: ", txStd.Signature[0].Nonce, " input nonce is: ", singerNonce[signerName]+txNumber+1)
 					wg.Done()
 				}(i, j)
 			}
 		}
-		//for i := 0; i < t.Duration; i++  {
-		//	for j := 0; j < t.Rate; j++ {
-		//		fmt.Printf("%d percent prapared...\n", int(float32(i * t.Rate + j)/ float32(t.Duration * t.Rate) * 100))
-		//		txNumber := int64(i * t.Rate + j)
-		//		txStd, _ = signStdTx(t.Clictx, signerName, singerNonce[signerName]+txNumber+1, txStd, "")
-		//		t.PreparedTx.Set(string(txNumber), t.Clictx.Codec.MustMarshalBinaryBare(txStd))
-		//	}
-		//}
 	}
 	wg.Wait()
 }
@@ -282,6 +274,19 @@ func GetSignerNonce(t *transacter) (map[string]int64) {
 	return signerNonce
 }
 
+func GetSignerPrikey(t *transacter) map[string] crypto.PrivKey {
+	var signerPrivkey = make(map[string] crypto.PrivKey)
+	keybase, _ := keys.GetKeyBase(t.Clictx)
+	infos, _ := keybase.List()
+	for _, info := range infos {
+		name := info.GetName()
+		privkey, _ := keybase.ExportPrivateKeyObject(name, t.Config.Pass)
+		signerPrivkey[name] = privkey
+	}
+
+	return signerPrivkey
+}
+
 func BroadcastTx(t *transacter, tx []byte) ([]byte, error) {
 	switch t.BroadcastTxMethod {
 
@@ -339,27 +344,37 @@ func getDefaultAccountNonce(ctx clictx.CLIContext, address []byte) (int64, error
 	return account.GetAccountNonce(newCtx, address)
 }
 
-func SignStdTx(t *transacter, signerKeyName string, nonce int64, txStd *txs.TxStd, fromChainID string) (*txs.TxStd, error) {
+func SignStdTx2(t *transacter, signerKeyName string, nonce int64, txStd *txs.TxStd, fromChainID string) (*txs.TxStd, error) {
 	info, err := keys.GetKeyInfo(t.Clictx, signerKeyName)
 	if err != nil {
 		return nil, err
 	}
 
 	addr := info.GetAddress()
-	ok := false
 
 	for _, signer := range txStd.GetSigners() {
-		if bytes.Equal(addr.Bytes(), signer.Bytes()) {
-			ok = true
+		if !bytes.Equal(addr.Bytes(), signer.Bytes()) {
+			return nil, fmt.Errorf("Name %s is not signer", signerKeyName)
 		}
-	}
-
-	if !ok {
-		return nil, fmt.Errorf("Name %s is not signer", signerKeyName)
 	}
 
 	sigdata := txStd.BuildSignatureBytes(nonce, fromChainID)
 	sig, pubkey := SignData(t, signerKeyName, sigdata)
+	txStd.Signature = make([]txs.Signature, 1)
+	txStd.Signature[0] = txs.Signature{
+		Pubkey:    pubkey,
+		Signature: sig,
+		Nonce:     nonce,
+	}
+
+	return txStd, nil
+}
+
+func SignStdTx(txStd *txs.TxStd, privkey crypto.PrivKey, nonce int64, fromChainID string) (*txs.TxStd, error) {
+	sigdata := txStd.BuildSignatureBytes(nonce, fromChainID)
+	sig, _ := privkey.Sign(sigdata)
+	pubkey := privkey.PubKey()
+
 	txStd.Signature = make([]txs.Signature, 1)
 	txStd.Signature[0] = txs.Signature{
 		Pubkey:    pubkey,
