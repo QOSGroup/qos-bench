@@ -1,5 +1,8 @@
-name="bench_test"
+> ./config.json
+
+name_prefix="bench_test"
 pass="12345678"
+
 address=`echo $pass | qoscli keys add $name | awk '{if(NR==2){print $3};}'`
 
 # add monikor, pass, address, write them into config.json
