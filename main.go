@@ -38,7 +38,7 @@ func main() {
 	flagSet.IntVar(&durationInt, "T", 30, "Exit after the specified amount of time in seconds")
 	flagSet.IntVar(&txsRate, "R", 100, "Txs per second to send in a connection")
 	flagSet.StringVar(&qosPath, "home", "~/.qoscli", "Setup qos home path")
-	flagSet.StringVar(&configFile, "file", "./config.json", "File deployed from which account to prepare Test Transactions")
+	flagSet.StringVar(&configFile, "config", "./config.json", "File deployed from which account to prepare Test Transactions")
 	flagSet.StringVar(&outputFormat, "output-format", "plain", "Output format: plain or json")
 	flagSet.StringVar(&broadcastTxMethod, "broadcast-tx-method", "async", "Broadcast method: async (no guarantees; fastest), sync (ensures tx is checked) or commit (ensures tx is checked and committed; slowest)")
 	flagSet.BoolVar(&verbose, "v", false, "Verbose output")

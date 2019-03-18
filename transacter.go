@@ -117,6 +117,7 @@ func (t *transacter)PrepareTx() {
 		errors.New("max-gas flag not correct")
 	}
 	bech32add, _ := types.GetAddrFromBech32(t.Config.Addr)
+
 	tx := transfer.TxTransfer{
 		Senders: transfertypes.TransItems{
 			{types.Address(bech32add), types.NewInt(1), nil},
