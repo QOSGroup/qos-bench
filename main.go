@@ -5,10 +5,9 @@ import (
 	"fmt"
 	"os"
 	"github.com/go-kit/kit/log/term"
-	"github.com/QOSGroup/qos/app"
 	"github.com/tendermint/tendermint/libs/log"
 	tmrpc "github.com/tendermint/tendermint/rpc/client"
-	clictx "github.com/QOSGroup/qbase/client/context"
+	qstarconf "github.com/QOSGroup/qstars/config"
 	"strings"
 	"time"
 	"os/signal"
@@ -17,27 +16,29 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"os/user"
+	"github.com/QOSGroup/qstars/star"
 )
 
 var logger = log.NewNopLogger()
 
-// FIXME config slice
 type Config struct {
-	Name	string	`json:"name"`
-	Addr  	string 	`json:"address"`
-	Pass 	string	`json:"password"`
+	AccountAddr  	string 	`json:"account_address"`
+	Privkey 		string	`json:"privkey"`
+	QSCName			string  `json:"qsc_name"`
+	Tochain			string 	`json: "tochain"`
+	Fromchain		string	`json: "fromchain"`
 }
 
 func main() {
 	var durationInt, txsRate, connections int
 	var verbose bool
-	var qosPath, configFile, outputFormat, broadcastTxMethod string
+	var qPath, configFile, outputFormat, broadcastTxMethod string
 
 	flagSet := flag.NewFlagSet("qos-bench", flag.ExitOnError)
 	flagSet.IntVar(&connections, "c", 1, "Connections to keep open per endpoint")
 	flagSet.IntVar(&durationInt, "T", 30, "Exit after the specified amount of time in seconds")
 	flagSet.IntVar(&txsRate, "R", 100, "Txs per second to send in a connection")
-	flagSet.StringVar(&qosPath, "home", "~/.qoscli", "Setup qos home path")
+	flagSet.StringVar(&qPath, "home", "~/.qstarscli", "Setup qos home path")
 	flagSet.StringVar(&configFile, "config", "./config.json", "File deployed from which account to prepare Test Transactions")
 	flagSet.StringVar(&outputFormat, "output-format", "plain", "Output format: plain or json")
 	flagSet.StringVar(&broadcastTxMethod, "broadcast-tx-method", "async", "Broadcast method: async (no guarantees; fastest), sync (ensures tx is checked) or commit (ensures tx is checked and committed; slowest)")
@@ -47,10 +48,10 @@ func main() {
 QOS blockchain benchmarking tool.
 
 Usage:
-	qos-bench [-c 1] [-T 10] [-r 1000] [endpoints] [-output-format <plain|json> [-broadcast-tx-method <async|sync|commit>]]
+	qstar-bench [-c 1] [-T 10] [-r 1000] [endpoints] [-output-format <plain|json> [-broadcast-tx-method <async|sync|commit>]]
 
 Examples:
-	qos-bench -v -T 10 -r 10 -output-format plain -broadcast-tx-method async localhost:26657
+	qstar-bench -v -T 10 -r 10 -output-format plain -broadcast-tx-method async localhost:26657
 `)
 		fmt.Println("Flags:")
 
@@ -96,7 +97,7 @@ Examples:
 	}
 
 	// Parse and find qos home directory.
-	path, err := ParsePath(qosPath)
+	path, err := ParsePath(qPath)
 	if err != nil {
 		printErrorAndExit(err.Error())
 	}
@@ -197,22 +198,22 @@ func Load(filename string) (Config, error) {
 	return config, err
 }
 
-func ParsePath(qosPath string) (string, error) {
+func ParsePath(qPath string) (string, error) {
 	var path string
-	if !filepath.IsAbs(qosPath) {
-		switch qosPath {
-		case "~/.qoscli":
+	if !filepath.IsAbs(qPath) {
+		switch qPath {
+		case "~/.qstarscli":
 			user, err := user.Current()
 			if nil == err {
-				path = filepath.Join(user.HomeDir, ".qoscli")
+				path = filepath.Join(user.HomeDir, ".qstarscli")
 			}
 		default:
 			wd, _ := os.Getwd()
-			path, _ = filepath.Abs(filepath.Join(wd, qosPath))
+			path, _ = filepath.Abs(filepath.Join(wd, qPath))
 		}
 	}
 
-	// Check qosPath
+	// Check qstarPath
 	_, err := os.Stat(path)
 	if err != nil && os.IsNotExist(err) {
 		printErrorAndExit(err.Error())
@@ -252,10 +253,16 @@ func PrepareTransacters(
 ) []*transacter {
 	fmt.Println("Start Preparing Test Transactions ...")
 	transacters := make([]*transacter, len(endpoints))
-	ctx := clictx.NewCLIContext().WithCodec(app.MakeCodec()).WithClient(client)
+
+	cfg, _ := qstarconf.InterceptLoadConfig()
+	cfg.QOSNodeURI = "192.168.1.203:26657"
+	fmt.Println("cfg.RootDir: ", cfg.RootDir)
+	fmt.Println("cfg.QOSNodeURI", cfg.QOSNodeURI)
+
+	qstar_clictx := qstarconf.CreateCLIContextTwo(star.MakeCodec(), cfg, client)
 
 	for i, e := range endpoints {
-		t := newTransacter(config, qosPath, ctx, e, connections, durationInt, txsRate, broadcastTxMethod)
+		t := newTransacter(config, qosPath, qstar_clictx, e, connections, durationInt, txsRate, broadcastTxMethod)
 		t.SetLogger(logger)
 		t.PrepareTx()
 		transacters[i] = t

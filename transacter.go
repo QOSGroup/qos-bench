@@ -18,15 +18,17 @@ import (
 	"github.com/tendermint/tendermint/libs/log"
 	"github.com/pkg/errors"
 	"github.com/QOSGroup/qos/module/transfer"
- 	clictx "github.com/QOSGroup/qbase/client/context"
+	qstarconf "github.com/QOSGroup/qstars/config"
 	cflags "github.com/QOSGroup/qbase/client/types"
-	tmrpc "github.com/tendermint/tendermint/rpc/client"
 	transfertypes "github.com/QOSGroup/qos/module/transfer/types"
-	"github.com/QOSGroup/qbase/client/keys"
-	"bytes"
+	qstartypes "github.com/QOSGroup/qstars/types"
 	"github.com/tendermint/tendermint/crypto"
-	"github.com/QOSGroup/qbase/client/account"
 	"github.com/orcaman/concurrent-map"
+	"math/big"
+	"github.com/tendermint/tendermint/crypto/ed25519"
+	"encoding/base64"
+	"github.com/QOSGroup/qbase/account"
+	"github.com/QOSGroup/qstars/x/bank"
 )
 
 const (
@@ -37,9 +39,9 @@ const (
 
 type transacter struct {
 	Config 		      Config
-	qosPath			  string
+	qPath			  string
 
-	Clictx clictx.CLIContext
+	Clictx 			  qstarconf.QStarsClientContext
 	PreparedTx		  cmap.ConcurrentMap
 
 	Target            string
@@ -57,10 +59,10 @@ type transacter struct {
 	logger log.Logger
 }
 
-func newTransacter(config Config, qosPath string, clictx clictx.CLIContext, target string, connections, durationInt int, rate int, broadcastTxMethod string) *transacter {
+func newTransacter(config Config, qPath string, clictx qstarconf.QStarsClientContext, target string, connections, durationInt int, rate int, broadcastTxMethod string) *transacter {
 	return &transacter{
 		Config: 		   config,
-		qosPath: 		   qosPath,
+		qPath: 		   	   qPath,
 
 		Clictx: 		   clictx,
 		PreparedTx:		   cmap.New(),
@@ -116,34 +118,48 @@ func (t *transacter)PrepareTx() {
 	if maxGas < 0 {
 		errors.New("max-gas flag not correct")
 	}
-	bech32add, _ := types.GetAddrFromBech32(t.Config.Addr)
+	coin := types.BaseCoins{&types.BaseCoin{t.Config.QSCName, types.NewIntFromBigInt(big.NewInt(1))}}
+
+	from, _ := qstartypes.AccAddressFromBech32(t.Config.AccountAddr)
+	fromaddr := account.AddressStoreKey(from)
 
 	tx := transfer.TxTransfer{
 		Senders: transfertypes.TransItems{
-			{types.Address(bech32add), types.NewInt(1), nil},
+			{types.Address(from), types.NewInt(0), coin},
 		},
 		Receivers: transfertypes.TransItems{
-			{types.Address(bech32add), types.NewInt(1), nil},
+			{types.Address(from), types.NewInt(0), coin},
 		},
 	}
 
-	signers := GetSigners(t, tx.GetSigner())
-	singerNonce := GetSignerNonce(t)
+	singerQSCAccount, err := t.Clictx.QSCCliContext.GetAccount(fromaddr, t.Clictx.QSCCliContext.Codec)
+	if err != nil {
+		fmt.Println("err is : ", err)
+	}
+	singerQOSAccount, err := t.Clictx.QOSCliContext.GetAccount(fromaddr, t.Clictx.QOSCliContext.Codec)
+	if err != nil {
+		fmt.Println("err is : ", err)
+	}
+
+	fmt.Println(" singerQSCAccount.Nonce: ",  singerQSCAccount.Nonce)
+	fmt.Println(" singerQOSAccount.Nonce: ",  singerQOSAccount.Nonce)
+
 	signerPrivkey := GetSignerPrikey(t)
+
 	wg := sync.WaitGroup{}
-	for _, signerName := range signers {
-		for i := 0; i < t.Duration; i++  {
-			for j := 0; j < t.Rate; j++ {
-				fmt.Printf("%d Percent In Prograss ...\n", int(float32(i * t.Rate + j)/ float32(t.Duration * t.Rate) * 100))
-				wg.Add(1)
-				go func(i int, j int) {
-					txStd := txs.NewTxStd(tx, "test", types.NewInt(maxGas))
-					txNumber := int64(i * t.Rate + j) + 1
-					txStd, _ = SignStdTx(txStd, signerPrivkey[signerName], singerNonce[signerName]+txNumber, "")
-					t.PreparedTx.Set(string(txNumber), t.Clictx.Codec.MustMarshalBinaryBare(txStd))
-					wg.Done()
-				}(i, j)
-			}
+	for i := 0; i < t.Duration; i++  {
+		for j := 0; j < t.Rate; j++ {
+			fmt.Printf("%d Percent In Prograss ...\n", int(float32(i * t.Rate + j)/ float32(t.Duration * t.Rate) * 100))
+			wg.Add(1)
+			go func(i int, j int) {
+				txNumber := int64(i * t.Rate + j) + 1
+				txStd := txs.NewTxStd(tx, t.Config.Tochain, types.NewInt(20000))
+				txStd, _ = SignStdTxToChain(txStd, signerPrivkey, singerQOSAccount.Nonce + txNumber, t.Config.Fromchain, t.Config.Tochain)
+				txStd, _ = SignStdTxFromChain(txStd, signerPrivkey, singerQSCAccount.Nonce + txNumber, t.Config.Fromchain)
+
+				t.PreparedTx.Set(string(txNumber), t.Clictx.QSCCliContext.Codec.MustMarshalBinaryBare(txStd))
+				wg.Done()
+			}(i, j)
 		}
 	}
 	wg.Wait()
@@ -263,49 +279,31 @@ func (t *transacter) sendLoop(connIndex int) {
 	}
 }
 
-func GetSignerNonce(t *transacter) (map[string]int64) {
-	keybase, _ := keys.GetKeyBaseFromDir(t.Clictx, t.qosPath)
-	var signerNonce = make(map[string]int64)
-	infos, _ := keybase.List()
-	for _, info := range infos {
-		nonce, _ := getDefaultAccountNonce(t.Clictx, info.GetAddress().Bytes())
-		signerNonce[info.GetName()] = nonce
-	}
-
-	return signerNonce
-}
-
-func GetSignerPrikey(t *transacter) map[string] crypto.PrivKey {
-	var signerPrivkey = make(map[string] crypto.PrivKey)
-	keybase, _ := keys.GetKeyBase(t.Clictx)
-	infos, _ := keybase.List()
-	for _, info := range infos {
-		name := info.GetName()
-		privkey, _ := keybase.ExportPrivateKeyObject(name, t.Config.Pass)
-		signerPrivkey[name] = privkey
-	}
-
-	return signerPrivkey
+func GetSignerPrikey(t *transacter) crypto.PrivKey {
+	var key ed25519.PrivKeyEd25519
+	priv, _ := base64.StdEncoding.DecodeString(t.Config.Privkey)
+	copy(key[:], priv)
+	return key
 }
 
 func BroadcastTx(t *transacter, tx []byte) ([]byte, error) {
 	switch t.BroadcastTxMethod {
 
 	case "broadcast_tx_async":
-		_, err := t.Clictx.BroadcastTxAsync(tx)
+		_, err := t.Clictx.QSCCliContext.BroadcastTxAsync(tx)
 		if err != nil {
 			fmt.Println("BroadcastTx error status: ", err)
 		}
-	case "broadcast_tx_sync":
-		_, err := t.Clictx.BroadcastTxSync(tx)
-		if err != nil {
-			fmt.Println("BroadcastTx error status: ", err)
-		}
-	case "broadcast_tx_commit":
-		_, err := t.Clictx.BroadcastTxAndAwaitCommit(tx)
-		if err != nil {
-			fmt.Println("BroadcastTx error status: ", err)
-		}
+	//case "broadcast_tx_sync":
+	//	_, err := t.Clictx.QOSCliContext.BroadcastTxSync(tx)
+	//	if err != nil {
+	//		fmt.Println("BroadcastTx error status: ", err)
+	//	}
+	//case "broadcast_tx_commit":
+	//	_, err := t.Clictx.QSCCliContext.BroadcastTxAndAwaitCommit(tx)
+	//	if err != nil {
+	//		fmt.Println("BroadcastTx error status: ", err)
+	//	}
 	default:
 		fmt.Println("BroadcastTxMethod unexpected", )
 	}
@@ -313,92 +311,44 @@ func BroadcastTx(t *transacter, tx []byte) ([]byte, error) {
 	return tx, nil
 }
 
-func GetSigners(t *transacter, txSignerAddrs []types.Address) []string {
-	var Signers []string
-	for _, addr := range txSignerAddrs {
-		keybase, err := keys.GetKeyBaseFromDir(t.Clictx, t.qosPath)
-		info, _ := keybase.Get(t.Config.Name)
-
-		if err != nil {
-			panic(err.Error())
-		}
-		info, err = keybase.GetByAddress(addr)
-		if err != nil {
-			panic(fmt.Sprintf("signer addr: %s not in current keybase. err:%s", addr, err.Error()))
-		}
-
-		Signers = append(Signers, info.GetName())
-	}
-
-	return Signers
-}
-
-func getDefaultAccountNonce(ctx clictx.CLIContext, address []byte) (int64, error) {
-	if ctx.NonceNodeURI == "" {
-		return account.GetAccountNonce(ctx, address)
-	}
-
-	//NonceNodeURI不为空,使用NonceNodeURI查询account nonce值
-	rpc := tmrpc.NewHTTP(ctx.NonceNodeURI, "/websocket")
-	newCtx := clictx.NewCLIContext().WithClient(rpc).WithCodec(ctx.Codec)
-
-	return account.GetAccountNonce(newCtx, address)
-}
-
-func SignStdTx2(t *transacter, signerKeyName string, nonce int64, txStd *txs.TxStd, fromChainID string) (*txs.TxStd, error) {
-	info, err := keys.GetKeyInfo(t.Clictx, signerKeyName)
-	if err != nil {
-		return nil, err
-	}
-
-	addr := info.GetAddress()
-
-	for _, signer := range txStd.GetSigners() {
-		if !bytes.Equal(addr.Bytes(), signer.Bytes()) {
-			return nil, fmt.Errorf("Name %s is not signer", signerKeyName)
-		}
-	}
-
-	sigdata := txStd.BuildSignatureBytes(nonce, fromChainID)
-	sig, pubkey := SignData(t, signerKeyName, sigdata)
-	txStd.Signature = make([]txs.Signature, 1)
-	txStd.Signature[0] = txs.Signature{
-		Pubkey:    pubkey,
-		Signature: sig,
+func SignStdTxToChain(txStd *txs.TxStd, privkey crypto.PrivKey, nonce int64, Fromchain string, Tochain string) (*txs.TxStd, error) {
+	signature, _ := txStd.SignTx(privkey, nonce, Fromchain, Tochain)
+	txStd.Signature = append(txStd.Signature, txs.Signature{
+		Pubkey:    privkey.PubKey(),
+		Signature: signature,
 		Nonce:     nonce,
-	}
+	})
 
 	return txStd, nil
 }
 
-func SignStdTx(txStd *txs.TxStd, privkey crypto.PrivKey, nonce int64, fromChainID string) (*txs.TxStd, error) {
-	sigdata := txStd.BuildSignatureBytes(nonce, fromChainID)
-	sig, _ := privkey.Sign(sigdata)
-	pubkey := privkey.PubKey()
+func SignStdTxFromChain(txStd *txs.TxStd, privkey crypto.PrivKey, nonce int64, FromChain string) (*txs.TxStd, error) {
+	txStdW := txs.NewTxStd(nil, FromChain, txStd.MaxGas)
+	txStdW.ITx = bank.NewWrapperSendTx(txStd)
 
-	txStd.Signature = make([]txs.Signature, 1)
-	txStd.Signature[0] = txs.Signature{
-		Pubkey:    pubkey,
-		Signature: sig,
+	signature, _ := txStdW.SignTx(privkey, nonce, FromChain, FromChain)
+	txStdW.Signature = append(txStdW.Signature, txs.Signature{
+		Pubkey:    privkey.PubKey(),
+		Signature: signature,
 		Nonce:     nonce,
-	}
+	})
 
-	return txStd, nil
+	return txStdW, nil
 }
 
-func SignData(t *transacter, name string, data []byte) ([]byte, crypto.PubKey) {
-	// FIXME password shoud be read from config file
-	keybase, err := keys.GetKeyBase(t.Clictx)
-	if err != nil {
-		panic(err.Error())
-	}
-	sig, pubkey, err := keybase.Sign(name, t.Config.Pass, data)
-	if err != nil {
-		panic(err.Error())
-	}
-
-	return sig, pubkey
-}
+//func SignData(t *transacter, name string, data []byte) ([]byte, crypto.PubKey) {
+//	// FIXME password shoud be read from config file
+//	keybase, err := keys.GetKeyBase(t.Clictx)
+//	if err != nil {
+//		panic(err.Error())
+//	}
+//	sig, pubkey, err := keybase.Sign(name, t.Config., data)
+//	if err != nil {
+//		panic(err.Error())
+//	}
+//
+//	return sig, pubkey
+//}
 
 func (t *transacter) receiveLoop(connIndex int) {
 	c := t.conns[connIndex]
