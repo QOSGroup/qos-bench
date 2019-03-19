@@ -25,8 +25,9 @@ type Config struct {
 	AccountAddr  	string 	`json:"account_address"`
 	Privkey 		string	`json:"privkey"`
 	QSCName			string  `json:"qsc_name"`
-	Tochain			string 	`json: "tochain"`
-	Fromchain		string	`json: "fromchain"`
+	Tochain			string 	`json:"tochain"`
+	Fromchain		string	`json:"fromchain"`
+	QOSNodeURI		string  `json:"qos_node_uri"`
 }
 
 func main() {
@@ -255,9 +256,7 @@ func PrepareTransacters(
 	transacters := make([]*transacter, len(endpoints))
 
 	cfg, _ := qstarconf.InterceptLoadConfig()
-	cfg.QOSNodeURI = "192.168.1.203:26657"
-	fmt.Println("cfg.RootDir: ", cfg.RootDir)
-	fmt.Println("cfg.QOSNodeURI", cfg.QOSNodeURI)
+	cfg.QOSNodeURI = config.QOSNodeURI
 
 	qstar_clictx := qstarconf.CreateCLIContextTwo(star.MakeCodec(), cfg, client)
 

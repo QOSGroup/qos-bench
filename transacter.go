@@ -141,9 +141,6 @@ func (t *transacter)PrepareTx() {
 		fmt.Println("err is : ", err)
 	}
 
-	fmt.Println(" singerQSCAccount.Nonce: ",  singerQSCAccount.Nonce)
-	fmt.Println(" singerQOSAccount.Nonce: ",  singerQOSAccount.Nonce)
-
 	signerPrivkey := GetSignerPrikey(t)
 
 	wg := sync.WaitGroup{}
@@ -335,20 +332,6 @@ func SignStdTxFromChain(txStd *txs.TxStd, privkey crypto.PrivKey, nonce int64, F
 
 	return txStdW, nil
 }
-
-//func SignData(t *transacter, name string, data []byte) ([]byte, crypto.PubKey) {
-//	// FIXME password shoud be read from config file
-//	keybase, err := keys.GetKeyBase(t.Clictx)
-//	if err != nil {
-//		panic(err.Error())
-//	}
-//	sig, pubkey, err := keybase.Sign(name, t.Config., data)
-//	if err != nil {
-//		panic(err.Error())
-//	}
-//
-//	return sig, pubkey
-//}
 
 func (t *transacter) receiveLoop(connIndex int) {
 	c := t.conns[connIndex]
