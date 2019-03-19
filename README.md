@@ -35,3 +35,18 @@ $ ./qos-bench -v -T 10 -R 10 -home "~/.qoscli" -file "./config.json" localhost:2
 ```bash
 $ ./qos-bench -h
 ```
+
+
+
+## QOS、Qstar、cassini跨链
+对应下述系统参数的压测 TPS 值参考：
+
+|     | qos   | qstar | 中继跨链 |
+| --- | :---: | :---: | :---:   |
+| 平均TPS | 1000	| 300 | 300 |
+| 节点网络配置 | 单节点 | 单节点 | 单qos节点网络，单中继，单qstar节点网络 |
+| 节点硬件参数 | 2197.540 MHz 双核CPU * 1 | 2197.306 MHz 双核CPU * 1 | 2197 MHz 双核CPU * 1 |
+| 节点带宽 | 1000Mb/s | 1000Mb/s	| 1000Mb/s |
+| 测试交易类型 | 单个用户转账 | 单个用户转账 | 单个用户转账 |
+| 发币场景 | 网络初始化发币 | CA证书 | CA证书 |
+
