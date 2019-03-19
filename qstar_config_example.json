@@ -1,0 +1,8 @@
+{
+"account_address": "address1qkwvvkewtt0rwmv4gzjxhgh6jvyqakdte8tmtj",
+"privkey": "vlF49tPqxj0qNbbHUu1IJrXlZ0+gtIvo3a+fK3RpKXU7swGDKWaoG33IcVsZBqGzn8Dl7gPuk20U9DjNZ+gExg==",
+"qsc_name": "qstars",
+"fromchain": "qstars-test",
+"tochain": "qos-test",
+"qos_node_uri": "192.168.1.203:26657"
+}
